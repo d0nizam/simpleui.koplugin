@@ -1226,46 +1226,57 @@ function M.applyToSub(widget)
                 table.insert(tb, sub_back_btn)
                 widget._titlebar_sub_back_btn = sub_back_btn
 
-                -- Applies the correct state to sub_back depending on context:
-                --   • widget.name ~= "collections"  → hide (button not relevant)
-                --   • name == "collections", page > 1 → paginate (tap = page-1, hold = page 1)
-                --   • name == "collections", page == 1 → return to collection list (onReturn)
+                -- Applies the correct state to sub_back with unified logic across
+                -- all sub-widgets (collections, history, coll_list, …):
+                --
+                --   page > 1              → show; tap = previous page, hold = page 1
+                --   page == 1, onReturn   → show; tap = onReturn (or onClose fallback)
+                --   page == 1, no onReturn → hide (nothing to go back to)
+                --
+                -- This mirrors the native bar: page_return_arrow is enabled when
+                -- #self.paths > 0 (there is somewhere to go back to), and the
+                -- chevrons handle page navigation. sub_back unifies both functions.
                 local function _applySubBackButtonState(w_self, page)
                     local btn = w_self._titlebar_sub_back_btn
                     if not btn then return end
-                    local is_coll = w_self.name == "collections"
-                    if not is_coll then
-                        -- Not a collections widget: hide the button entirely.
+
+                    local has_return = (w_self.onReturn ~= nil)
+                    local visible    = (page > 1) or has_return
+
+                    if not visible then
+                        -- Nothing to go back to: hide the button.
                         btn.overlap_offset = { _hideOffset(sw), 0 }
                         btn.callback       = function() end
                         btn.hold_callback  = function() end
                     else
-                        -- Collections widget: show the button with correct icon.
+                        -- Show the button with the current icon (respects SUIStyle override).
+                        -- .icon and .file are mutually exclusive in KOReader's ImageWidget:
+                        -- init() gives precedence to .icon, so whichever we do NOT want
+                        -- must be nilled explicitly.
                         local _ss = SUIStyle()
                         local custom_back = _ss and _ss.getIcon("sui_back")
                         if custom_back then
                             btn.image.icon = nil
                             btn.image.file = custom_back
-                            pcall(btn.image.free, btn.image)
-                            pcall(btn.image.init, btn.image)
                         else
                             btn.image.file = nil
                             btn.image.icon = ICON_UP
-                            pcall(btn.image.free, btn.image)
-                            pcall(btn.image.init, btn.image)
                         end
+                        pcall(btn.image.free, btn.image)
+                        pcall(btn.image.init, btn.image)
+
                         local sl = slot_map["sub_back"]
                         if sl then
                             btn.overlap_offset = { _buttonX(sl.side, sl.slot, iw, pad, gap, sw), 0 }
                         end
+
                         if page > 1 then
-                            -- Multiple pages: tap goes back one page, hold goes to page 1.
+                            -- Paginated: tap goes back one page, hold goes to page 1.
                             btn.callback      = function() w_self:onGotoPage(page - 1) end
                             btn.hold_callback = function() w_self:onGotoPage(1) end
                         else
-                            -- Page 1 inside a collection: go back to the collections list.
-                            -- onReturn is set by FileManagerCollection:onShowColl() and
-                            -- triggers close_callback + onShowCollList().
+                            -- Page 1 with a return destination (e.g. inside a collection,
+                            -- going back to the collection list via onReturn).
                             btn.callback = function()
                                 if w_self.onReturn then
                                     w_self:onReturn()
