@@ -604,8 +604,24 @@ local function _reapplyTitlebar()
                 QA.showIconPicker(
                     M.getIcon(slot.id),
                     function(new_path)
-                        M.setIcon(slot.id, new_path)
-                        _refresh(slot.group)
+                        -- Guard: validate format/existence before persisting.
+                        -- nil = "reset to default", always valid.
+                        if new_path == nil then
+                            M.setIcon(slot.id, nil)
+                            _refresh(slot.group)
+                            return
+                        end
+                        local safe = M.safeIconPath(new_path, nil)
+                        if safe then
+                            M.setIcon(slot.id, safe)
+                            _refresh(slot.group)
+                        else
+                            local _InfoMessage = require("ui/widget/infomessage")
+                            UIManager:show(_InfoMessage:new{
+                                text    = _("Unsupported icon format.\nPlease use a PNG or SVG file."),
+                                timeout = 3,
+                            })
+                        end
                     end,
                     type(slot.label) == "function" and slot.label() or slot.label,
                     plugin,
