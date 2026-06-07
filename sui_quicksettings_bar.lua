@@ -956,6 +956,29 @@ function QSBar.install()
         orig_sut(m_self)
         injectPanelTab(m_self)
     end
+
+    -- 3. Patch ReaderMenu:onShowMenu to inject the panel tab inside the reader.
+    --
+    --    We cannot mirror step 2 and patch setUpdateItemTable, because
+    --    ReaderMenu caches tab_item_table after the first call and the nil-guard
+    --    in onShowMenu prevents setUpdateItemTable from ever being called again.
+    --    Patching onShowMenu guarantees injectPanelTab runs on every menu open,
+    --    even with the cached tab_item_table — identical to what setUpdateItemTable
+    --    achieves for FileManagerMenu (which rebuilds tab_item_table each time).
+    local ok_rm, RMenu = pcall(require, "apps/reader/modules/readermenu")
+    if ok_rm and RMenu and not RMenu._sui_qs_tab_patched then
+        RMenu._sui_qs_tab_patched = true
+
+        local orig_show_menu = RMenu.onShowMenu
+        RMenu.onShowMenu = function(m_self, ...)
+            -- tab_item_table is built (or already cached) at this point;
+            -- inject our panel tab before the TouchMenu is created.
+            if m_self.tab_item_table then
+                injectPanelTab(m_self)
+            end
+            return orig_show_menu(m_self, ...)
+        end
+    end
 end
 
 -- QSBar.uninstall()
@@ -966,6 +989,11 @@ function QSBar.uninstall()
     local FMMenu = package.loaded["apps/filemanager/filemanagermenu"]
     if FMMenu and FMMenu._sui_qs_tab_patched then
         FMMenu._sui_qs_tab_patched = nil
+    end
+
+    local RMenu = package.loaded["apps/reader/modules/readermenu"]
+    if RMenu and RMenu._sui_qs_tab_patched then
+        RMenu._sui_qs_tab_patched = nil
     end
 end
 
