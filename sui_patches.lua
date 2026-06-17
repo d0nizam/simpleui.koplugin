@@ -1854,8 +1854,22 @@ function M.patchMenuInitForPagination(plugin)
         end
 
         if SUISettings:nilOrTrue("simpleui_bar_pagination_visible") then return end
-        if not TARGET_NAMES[menu_self.name]
-           and not (menu_self.covers_fullscreen and menu_self.is_borderless and menu_self.title_bar_fm_style) then
+        -- The structural fallback below (covers_fullscreen + is_borderless +
+        -- title_bar_fm_style) is also matched by native KOReader Menus that are
+        -- NOT FM-style overlays — e.g. ReaderSearch's "all results" Menu
+        -- (readersearch.lua sets all three flags too) — which only ever shows
+        -- while the FileManager is closed (book open, Reader active). Without
+        -- the liveFM() check, opening that menu while "Hide pagination bar" is
+        -- on would silently strip its page indicator and back button.
+        -- liveFM() ~= nil restricts the fallback to menus actually created
+        -- while FM is the active screen (e.g. Collections' property/folder
+        -- sub-lists, which have no explicit name), matching the same intent
+        -- as TARGET_NAMES without re-exposing the Reader-side leak.
+        local is_fm_style_overlay = menu_self.covers_fullscreen
+                                 and menu_self.is_borderless
+                                 and menu_self.title_bar_fm_style
+                                 and liveFM() ~= nil
+        if not TARGET_NAMES[menu_self.name] and not is_fm_style_overlay then
             return
         end
 
@@ -3081,8 +3095,18 @@ function M.patchWallpaperFM(plugin)
             --      Without this, Menu:init resets background=COLOR_WHITE on every
             --      file list rebuild and the original condition never catches it.
             local is_fm_file_chooser   = (menu_self.name == "filemanager")
+            -- Gate by the same name allowlist used for the actual wallpaper-image
+            -- injection (M._WALLPAPER_NAMES, set in patchUIManagerShow). Without
+            -- this, ANY covers_fullscreen+is_borderless Menu gets its background
+            -- nil'd — including ReaderSearch's "all results" Menu (readersearch.lua
+            -- sets covers_fullscreen=true, is_borderless=true too), which has
+            -- nothing painting a backdrop behind it, leaving the book page behind
+            -- it visible through the now-transparent search results list.
             local is_fullscreen_overlay = menu_self.covers_fullscreen
                                        and menu_self.is_borderless
+                                       and menu_self.name
+                                       and M._WALLPAPER_NAMES
+                                       and M._WALLPAPER_NAMES[menu_self.name]
             if (is_fm_file_chooser or is_fullscreen_overlay) and menu_self[1] then
                 -- Clear the outer FrameContainer KOReader always builds white.
                 menu_self[1].background = nil
