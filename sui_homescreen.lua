@@ -675,13 +675,39 @@ local function _updateNavpagerForHS(current_page, total_pages)
     UIManager:setDirty(tgt, "ui")
 end
 
+-- Resolves a KOBO_VIRTUAL:// path to a real on-disk path by asking the kobo
+-- plugin's VirtualLibrary to rebuild its path mappings if needed.
+-- Returns the real path on success, or the original path unchanged so the
+-- normal "file does not exist" error surfaces as usual.
+local function _resolveKoboVirtualPath(filepath)
+    if not filepath or filepath:sub(1, 14) ~= "KOBO_VIRTUAL:/" then
+        return filepath
+    end
+    local ok, PluginLoader = pcall(require, "pluginloader")
+    if not ok or not PluginLoader then return filepath end
+    local kobo = PluginLoader:getPluginInstance("kobo_plugin")
+    if not kobo or not kobo.virtual_library then return filepath end
+    local vl = kobo.virtual_library
+    -- If the mapping table is empty the user has not yet opened the Kobo
+    -- Library folder this session — rebuild it now.
+    if not next(vl.virtual_to_real) then
+        local ok2, err = pcall(function() vl:buildPathMappings() end)
+        if not ok2 then
+            logger.warn("sui_homescreen: kobo buildPathMappings failed:", err)
+            return filepath
+        end
+    end
+    local real = vl:getRealPath(filepath)
+    return real or filepath
+end
+
 local function openBook(filepath, pos0, page)
     -- ReaderUI:showReader() broadcasts ShowingReader before its first paint,
     -- closing FM/Homescreen atomically — no need to close HS first.
     local doOpen = function()
         local ReaderUI = package.loaded["apps/reader/readerui"]
             or require("apps/reader/readerui")
-        ReaderUI:showReader(filepath)
+        ReaderUI:showReader(_resolveKoboVirtualPath(filepath))
         if pos0 or page then
             UIManager:scheduleIn(0.5, function()
                 local rui = package.loaded["apps/reader/readerui"]
