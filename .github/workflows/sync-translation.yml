@@ -1,0 +1,121 @@
+name: Sync zh_CN Translation
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # 每天 UTC 8:00 (北京时间 16:00)
+  workflow_dispatch:      # 支持手动触发
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-translation:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout zh-translate branch
+        uses: actions/checkout@v4
+        with:
+          ref: zh-translate
+          fetch-depth: 0
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/doctorhetfield-cmd/simpleui.koplugin.git
+      
+      - name: Fetch upstream
+        run: git fetch upstream
+      
+      - name: Check for upstream changes
+        id: check
+        run: |
+          # 检查上游是否有新提交
+          LOCAL_MAIN=$(git merge-base zh-translate upstream/main)
+          UPSTREAM_HEAD=$(git rev-parse upstream/main)
+          
+          if [ "$LOCAL_MAIN" = "$UPSTREAM_HEAD" ]; then
+            echo "has_upstream_changes=false" >> $GITHUB_OUTPUT
+            echo "No upstream changes detected."
+          else
+            echo "has_upstream_changes=true" >> $GITHUB_OUTPUT
+            echo "Upstream changes detected!"
+          fi
+      
+      - name: Merge upstream changes
+        if: steps.check.outputs.has_upstream_changes == 'true'
+        run: |
+          git merge upstream/main --no-edit || {
+            echo "Merge conflict detected, aborting..."
+            git merge --abort
+            echo "has_conflicts=true" >> $GITHUB_OUTPUT
+            exit 1
+          }
+      
+      - name: Check translation completeness
+        if: steps.check.outputs.has_upstream_changes == 'true'
+        id: translate_check
+        run: |
+          python scripts/check_translation.py
+          MISSING=$(python scripts/check_translation.py --count-missing)
+          echo "missing_count=$MISSING" >> $GITHUB_OUTPUT
+      
+      - name: Auto-fix missing translations
+        if: steps.check.outputs.has_upstream_changes == 'true' && steps.translate_check.outputs.missing_count != '0'
+        run: |
+          python scripts/auto_translate.py
+          
+          # 检查是否有修改
+          if ! git diff --quiet locale/zh_CN.po; then
+            git add locale/zh_CN.po
+            git commit -m "chore: auto-sync zh_CN.po with upstream
+            
+            - Synced with latest upstream changes
+            - Added/fixed missing translations
+            - Automated by GitHub Actions"
+            echo "translations_updated=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Push changes
+        if: steps.check.outputs.has_upstream_changes == 'true'
+        run: git push origin zh-translate
+      
+      - name: Create Pull Request
+        if: steps.check.outputs.has_upstream_changes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: "chore: Auto-sync zh_CN translation with upstream"
+          body: |
+            ## Automated Translation Sync
+            
+            This PR was automatically created by GitHub Actions.
+            
+            ### Changes
+            - Synced `zh_CN.po` with latest upstream `simpleui.pot`
+            - Added/updated missing translations
+            
+            ### Translation Status
+            - Missing entries: ${{ steps.translate_check.outputs.missing_count }}
+            
+            ---
+            *This is an automated PR. Please review before merging.*
+          branch: auto-sync/zh-translate
+          base: main
+          delete-branch: true
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Upstream changes: ${{ steps.check.outputs.has_upstream_changes }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Missing translations: ${{ steps.translate_check.outputs.missing_count }}" >> $GITHUB_STEP_SUMMARY
